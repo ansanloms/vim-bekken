@@ -2,39 +2,52 @@ vim9script
 
 class WinId
   public var prompt: number = -1
-  public var result: number = -1
+  public var selection: number = -1
 endclass
 
 class Resource
   public var name: string = null_string
   public var filterKey: string = null_string
   public var list: list<dict<any>> = []
-  public var results: list<dict<any>> = []
+  public var selections: list<dict<any>> = []
   public var selected: dict<any> = null_dict
 endclass
 
+const marks = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+
 export class Bekken
   var loading: bool = false
-  var query: string = null_string
+  var query: string = ""
   var winid: WinId = WinId.new()
   var resource: Resource = Resource.new()
 
   var zindex: number = 100
   var size: dict<number> = { width: 160, height: 20 }
-  var resultFileType: string = null_string
+  var filetype: dict<string> = { prompt: "bekken-prompt", selection: "bekken-selection" }
 
-  def new(name: string, options: dict<any>): void
-    this.resource.name = name
+  def new(resource: string, options: dict<any>): void
+    this.resource.name = resource
 
-    this.query = options->has_key("query") ? options.query : ""
-    this.zindex = options->has_key("zindex") ? options.zindex : 100
-    this.size = options->has_key("size") ? options.size : { width: 160, height: 20 }
-    this.resultFileType = options->has_key("resultFileType") ? options.resultFileType : null_string
+    if options->has_key("query")
+      this.query = options.query
+    endif
+
+    if options->has_key("zindex")
+      this.zindex = options.zindex
+    endif
+
+    if options->has_key("size")
+      this.size = options.size
+    endif
+
+    if options->has_key("filetype")
+      this.filetype = options.filetype
+    endif
   enddef
 
-  def Open(args: list<any>): void
+  def Run(args: list<any>): void
     this._SetPrompt()
-    this._SetResult()
+    this._SetSelection()
 
     this._Render()
 
@@ -53,13 +66,13 @@ export class Bekken
       this.winid.prompt->popup_close()
     endif
 
-    if this.winid.result != -1
-      this.winid.result->popup_close()
+    if this.winid.selection != -1
+      this.winid.selection->popup_close()
     endif
   enddef
 
   def Exists(): bool
-    return this.winid.prompt != -1 && this.winid.result != -1
+    return this.winid.prompt != -1 && this.winid.selection != -1
   enddef
 
   def GetResource(): Resource
@@ -79,7 +92,7 @@ export class Bekken
       this.resource.filterKey = "line"
     endtry
 
-    this._SetResults()
+    this._SetSelections()
     this._SetSelected()
 
     this.loading = false
@@ -114,21 +127,21 @@ export class Bekken
       callback: (id: number, result: number) => this._CloseCb(id, result),
     })
 
-    win_execute(this.winid.prompt, "setlocal filetype=bekken-prompt")
+    win_execute(this.winid.prompt, "setlocal filetype=" .. (this.filetype->has_key("prompt") ? this.filetype.prompt : "bekken-prompt"))
   enddef
 
-  def _SetResult(): void
-    const resultPopupSize = this._GetResultPopupSize()
-    const resultPopupPosition = this._GetResultPopupPosition()
+  def _SetSelection(): void
+    const selectionPopupSize = this._GetSelectionPopupSize()
+    const selectionPopupPosition = this._GetSelectionPopupPosition()
 
-    this.winid.result = popup_create("", {
+    this.winid.selection = popup_create("", {
       title: "",
-      line: resultPopupPosition.y,
-      col: resultPopupPosition.x,
-      minwidth: resultPopupSize.width,
+      line: selectionPopupPosition.y,
+      col: selectionPopupPosition.x,
+      minwidth: selectionPopupSize.width,
       minheight: 1,
-      maxwidth: resultPopupSize.width,
-      maxheight: resultPopupSize.height,
+      maxwidth: selectionPopupSize.width,
+      maxheight: selectionPopupSize.height,
       firstline: 1,
       cursorline: true,
       hidden: true,
@@ -142,11 +155,7 @@ export class Bekken
       scrollbar: false,
     })
 
-    if (this.resultFileType != null)
-      win_execute(this.winid.result, "setlocal filetype=" .. this.resultFileType)
-    else
-      win_execute(this.winid.result, "setlocal filetype=bekken-result")
-    endif
+    win_execute(this.winid.selection, "setlocal filetype=" .. (this.filetype->has_key("selection") ? this.filetype.selection : "bekken-selection"))
   enddef
 
   def _GetPromptPopupSize(): dict<number>
@@ -158,7 +167,7 @@ export class Bekken
     }
   enddef
 
-  def _GetResultPopupSize(): dict<number>
+  def _GetSelectionPopupSize(): dict<number>
     const promptPopupSize = this._GetPromptPopupSize()
     const maxHeight = &lines - 8
 
@@ -170,8 +179,8 @@ export class Bekken
 
   def _GetPromptPopupPosition(): dict<number>
     const promptPopupSize = this._GetPromptPopupSize()
-    const resultPopupSize = this._GetResultPopupSize()
-    const totalHeight =  1 + promptPopupSize.height + 1 + resultPopupSize.height + 1
+    const selectionPopupSize = this._GetSelectionPopupSize()
+    const totalHeight =  1 + promptPopupSize.height + 1 + selectionPopupSize.height + 1
 
     return {
       x: float2nr(ceil(&columns / 2) - ceil(promptPopupSize.width / 2)),
@@ -179,7 +188,7 @@ export class Bekken
     }
   enddef
 
-  def _GetResultPopupPosition(): dict<number>
+  def _GetSelectionPopupPosition(): dict<number>
     const promptPopupPosition = this._GetPromptPopupPosition()
 
     return {
@@ -193,8 +202,8 @@ export class Bekken
       return true
     endif
 
-    if this.winid.result == -1
-      this._SetResult()
+    if this.winid.selection == -1
+      this._SetSelection()
     endif
 
     if key == "\<Esc>"
@@ -204,20 +213,20 @@ export class Bekken
 
     if key == "\<Bs>" || (char2nr(key) >= 32 && char2nr(key) <= 126)
       this.query = key == "\<Bs>" ? strcharpart(this.query, 0, strchars(this.query) - 1) : (this.query .. key)
-      this._SetResults()
+      this._SetSelections()
 
       this._Render()
       this._SetSelected()
     endif
 
-    if this.winid.result->popup_getpos().visible && ["\<Down>", "\<C-j>", "\<C-n>"]->indexof((i, v) => key == v) != -1
-      win_execute(this.winid.result, "call cursor(" .. (line(".", this.winid.result) + 1) .. ", 0)", "silent")
+    if this.winid.selection->popup_getpos().visible && ["\<Down>", "\<C-j>", "\<C-n>"]->indexof((i, v) => key == v) != -1
+      win_execute(this.winid.selection, "call cursor(" .. (line(".", this.winid.selection) + 1) .. ", 0)", "silent")
       redraw
       this._SetSelected()
     endif
 
-    if this.winid.result->popup_getpos().visible && ["\<Up>", "\<C-k>", "\<C-p>"]->indexof((i, v) => key == v) != -1
-      win_execute(this.winid.result, "call cursor(" .. (line(".", this.winid.result) - 1) .. ", 0)", "silent")
+    if this.winid.selection->popup_getpos().visible && ["\<Up>", "\<C-k>", "\<C-p>"]->indexof((i, v) => key == v) != -1
+      win_execute(this.winid.selection, "call cursor(" .. (line(".", this.winid.selection) - 1) .. ", 0)", "silent")
       redraw
       this._SetSelected()
     endif
@@ -230,19 +239,19 @@ export class Bekken
       this.winid.prompt->popup_close()
     endif
 
-    if id != this.winid.result
-      this.winid.result->popup_close()
+    if id != this.winid.selection
+      this.winid.selection->popup_close()
     endif
 
     this.query = ""
 
     this.winid.prompt = -1
-    this.winid.result = -1
+    this.winid.selection = -1
 
     this.resource.name = null_string
     this.resource.filterKey = null_string
     this.resource.list = []
-    this.resource.results = []
+    this.resource.selections = []
     this.resource.selected = null_dict
   enddef
 
@@ -256,34 +265,33 @@ export class Bekken
     endif
 
     this.winid.prompt->popup_show()
-    this.winid.result->popup_show()
+    this.winid.selection->popup_show()
 
-    const marks = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
-    const currentMark: string = this.winid.result->winbufnr()->getbufline(1)->join("")->trim()[0]
+    const currentMark: string = this.winid.selection->winbufnr()->getbufline(1)->join("")->trim()[0]
     const currentMarkIndex: number = marks->index(currentMark)
     const nextMarkIndex = (currentMarkIndex == -1 || currentMarkIndex >= (marks->len() - 1)) ? 0 : (currentMarkIndex + 1)
 
-    popup_settext(this.winid.result, marks[nextMarkIndex] .. " Loading...")
+    popup_settext(this.winid.selection, marks[nextMarkIndex] .. " Loading...")
     redraw
 
     timer_start(50, (_) => this._Loading())
   enddef
 
-  def _SetResults(): void
+  def _SetSelections(): void
     if this.query->len() > 0
-      this.resource.results = matchfuzzy(
+      this.resource.selections = matchfuzzy(
         this.resource.list,
         this.query,
         { key: this.resource.filterKey }
       )
     else
-      this.resource.results = this.resource.list
+      this.resource.selections = this.resource.list
     endif
   enddef
 
   def _SetSelected(): void
-    if this.winid.result != -1 && this.resource.results->len() > (line(".", this.winid.result) - 1)
-      this.resource.selected = this.resource.results[line(".", this.winid.result) - 1]
+    if this.winid.selection != -1 && this.resource.selections->len() > (line(".", this.winid.selection) - 1)
+      this.resource.selected = this.resource.selections[line(".", this.winid.selection) - 1]
     else
       this.resource.selected = null_dict
     endif
@@ -291,7 +299,7 @@ export class Bekken
 
   def _Render(): void
     this._RenderPrompt()
-    this._RenderResult()
+    this._RenderSelection()
     redraw
   enddef
 
@@ -301,7 +309,7 @@ export class Bekken
     endif
 
     var character = "➜"
-    var count = this.resource.results->len() .. " / " .. this.resource.list->len()
+    var count = this.resource.selections->len() .. " / " .. this.resource.list->len()
     var queryMaxLength = popup_getpos(this.winid.prompt).width - (character->len() + count->len() + 7)
 
     popup_settext(this.winid.prompt, [
@@ -313,15 +321,15 @@ export class Bekken
     this.winid.prompt->popup_show()
   enddef
 
-  def _RenderResult(): void
-    if this.winid.result == -1
+  def _RenderSelection(): void
+    if this.winid.selection == -1
       return
     endif
 
     try
       popup_settext(
-        this.winid.result,
-        this.resource.results
+        this.winid.selection,
+        this.resource.selections
           ->copy()
           ->map((line, target) => call(
             "bekken#resource#" .. this.resource.name .. "#Render",
@@ -330,24 +338,24 @@ export class Bekken
       )
     catch /E117.*/
       popup_settext(
-        this.winid.result,
-        this.resource.results
+        this.winid.selection,
+        this.resource.selections
           ->copy()
           ->map((line, target) => target[this.resource.filterKey])
       )
     endtry
 
-    if (this.resource.results->len() > 0)
-      win_execute(this.winid.result, "call cursor(1, 0)", "silent")
-      this.winid.result->popup_show()
+    if (this.resource.selections->len() > 0)
+      win_execute(this.winid.selection, "call cursor(1, 0)", "silent")
+      this.winid.selection->popup_show()
     else
-      this.winid.result->popup_hide()
+      this.winid.selection->popup_hide()
     endif
   enddef
 
   def Resize(): void
     this._ResizePrompt()
-    this._ResizeResult()
+    this._ResizeSelection()
     redraw
   enddef
 
@@ -375,27 +383,27 @@ export class Bekken
     this._RenderPrompt()
   enddef
 
-  def _ResizeResult(): void
-    if this.winid.result == -1
+  def _ResizeSelection(): void
+    if this.winid.selection == -1
       return
     endif
 
-    const resultPopupSize = this._GetResultPopupSize()
-    const resultPopupPosition = this._GetResultPopupPosition()
+    const selectionPopupSize = this._GetSelectionPopupSize()
+    const selectionPopupPosition = this._GetSelectionPopupPosition()
 
-    popup_move(this.winid.result, {
-      line: resultPopupPosition.y,
-      col: resultPopupPosition.x,
-      minwidth: resultPopupSize.width,
-      maxwidth: resultPopupSize.width,
-      maxheight: resultPopupSize.height,
+    popup_move(this.winid.selection, {
+      line: selectionPopupPosition.y,
+      col: selectionPopupPosition.x,
+      minwidth: selectionPopupSize.width,
+      maxwidth: selectionPopupSize.width,
+      maxheight: selectionPopupSize.height,
     })
 
-    popup_setoptions(this.winid.result, {
+    popup_setoptions(this.winid.selection, {
       zindex: this.zindex + 1,
     })
 
-    this._RenderResult()
+    this._RenderSelection()
   enddef
 endclass
 
@@ -412,14 +420,14 @@ export def Resize(): void
   endfor
 enddef
 
-export def Open(name: string, args: list<any>, options: dict<any>): Bekken
+export def Run(resource: string, args: list<any>, options: dict<any>): Bekken
   const key = rand()
   if bekkenList->has_key(key)
-    return Open(name, args, options)
+    return Run(resource, args, options)
   endif
 
-  bekkenList[key] = Bekken.new(name, options)
-  bekkenList[key].Open(args)
+  bekkenList[key] = Bekken.new(resource, options)
+  bekkenList[key].Run(args)
 
   return bekkenList[key]
 enddef
