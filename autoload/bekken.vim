@@ -22,7 +22,7 @@ export class Bekken
   var resource: Resource = Resource.new()
 
   var zindex: number = 100
-  var size: dict<number> = { width: 160, height: 20 }
+  var size: dict<number> = { width: 560, height: 40 }
   var filetype: dict<string> = { prompt: "bekken-prompt", selection: "bekken-selection" }
 
   def new(resource: string, options: dict<any>): void
@@ -169,7 +169,7 @@ export class Bekken
 
   def _GetSelectionPopupSize(): dict<number>
     const promptPopupSize = this._GetPromptPopupSize()
-    const maxHeight = &lines - 8
+    const maxHeight = &lines - 20
 
     return {
       width: promptPopupSize.width,
@@ -180,7 +180,7 @@ export class Bekken
   def _GetPromptPopupPosition(): dict<number>
     const promptPopupSize = this._GetPromptPopupSize()
     const selectionPopupSize = this._GetSelectionPopupSize()
-    const totalHeight =  1 + promptPopupSize.height + 1 + selectionPopupSize.height + 1
+    const totalHeight = 1 + promptPopupSize.height + 1 + selectionPopupSize.height + 1
 
     return {
       x: float2nr(ceil(&columns / 2) - ceil(promptPopupSize.width / 2)),
