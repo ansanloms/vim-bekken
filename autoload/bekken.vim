@@ -14,6 +14,8 @@ class Resource
 endclass
 
 const marks = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+const upKeys = ["\<Down>", "\<C-j>", "\<C-n>"]
+const downKeys = ["\<Up>", "\<C-k>", "\<C-p>"]
 
 export class Bekken
   var loading: bool = false
@@ -22,7 +24,7 @@ export class Bekken
   var resource: Resource = Resource.new()
 
   var zindex: number = 100
-  var size: dict<number> = { width: 560, height: 40 }
+  var size: dict<number> = { width: 560, height: 12 }
   var filetype: dict<string> = { prompt: "bekken-prompt", selection: "bekken-selection" }
 
   def new(resource: string, options: dict<any>): void
@@ -105,7 +107,7 @@ export class Bekken
     const promptPopupSize = this._GetPromptPopupSize()
     const promptPopupPosition = this._GetPromptPopupPosition()
 
-    this.winid.prompt =  popup_create("", {
+    this.winid.prompt = popup_create("", {
       title: "",
       line: promptPopupPosition.y,
       col: promptPopupPosition.x,
@@ -197,6 +199,17 @@ export class Bekken
     }
   enddef
 
+  def _WithLazyRedraw(Callback: func)
+    const old_lazyredraw = &lazyredraw
+    set lazyredraw
+    try
+      Callback()
+    finally
+      redraw
+      &lazyredraw = old_lazyredraw
+    endtry
+  enddef
+
   def _FilterCb(id: number, key: string): bool
     if this.loading
       return true
@@ -211,24 +224,34 @@ export class Bekken
       return true
     endif
 
+    if upKeys->index(key) >= 0
+      this.loading = true
+      timer_start(1, (timer) => {
+        this._WithLazyRedraw(() => {
+          win_execute(this.winid.selection, $"noautocmd call setpos('.', [{winbufnr(this.winid.selection)}, {line('.', this.winid.selection) + 1}, 0, 0])", 'silent')
+          this._SetSelected()
+        })
+        this.loading = false
+      })
+      return true
+    endif
+
+    if downKeys->index(key) >= 0
+      this.loading = true
+      timer_start(1, (timer) => {
+        this._WithLazyRedraw(() => {
+          win_execute(this.winid.selection, $"noautocmd call setpos('.', [{winbufnr(this.winid.selection)}, {line('.', this.winid.selection) - 1}, 0, 0])", 'silent')
+          this._SetSelected()
+        })
+        this.loading = false
+      })
+      return true
+    endif
+
     if key == "\<Bs>" || (char2nr(key) >= 32 && char2nr(key) <= 126)
       this.query = key == "\<Bs>" ? strcharpart(this.query, 0, strchars(this.query) - 1) : (this.query .. key)
       this._SetSelections()
-
       this._Render()
-      this._SetSelected()
-    endif
-
-    if this.winid.selection->popup_getpos().visible && ["\<Down>", "\<C-j>", "\<C-n>"]->indexof((i, v) => key == v) != -1
-      win_execute(this.winid.selection, "call cursor(" .. (line(".", this.winid.selection) + 1) .. ", 0)", "silent")
-      redraw
-      this._SetSelected()
-    endif
-
-    if this.winid.selection->popup_getpos().visible && ["\<Up>", "\<C-k>", "\<C-p>"]->indexof((i, v) => key == v) != -1
-      win_execute(this.winid.selection, "call cursor(" .. (line(".", this.winid.selection) - 1) .. ", 0)", "silent")
-      redraw
-      this._SetSelected()
     endif
 
     return call("bekken#resource#" .. this.resource.name .. "#Filter", [key, this])
@@ -271,8 +294,9 @@ export class Bekken
     const currentMarkIndex: number = marks->index(currentMark)
     const nextMarkIndex = (currentMarkIndex == -1 || currentMarkIndex >= (marks->len() - 1)) ? 0 : (currentMarkIndex + 1)
 
-    popup_settext(this.winid.selection, marks[nextMarkIndex] .. " Loading...")
-    redraw
+    this._WithLazyRedraw(() => {
+      popup_settext(this.winid.selection, marks[nextMarkIndex] .. " Loading...")
+    })
 
     timer_start(50, (_) => this._Loading())
   enddef
@@ -298,9 +322,10 @@ export class Bekken
   enddef
 
   def _Render(): void
-    this._RenderPrompt()
-    this._RenderSelection()
-    redraw
+    this._WithLazyRedraw(() => {
+      this._RenderPrompt()
+      this._RenderSelection()
+    })
   enddef
 
   def _RenderPrompt(): void
@@ -354,9 +379,10 @@ export class Bekken
   enddef
 
   def Resize(): void
-    this._ResizePrompt()
-    this._ResizeSelection()
-    redraw
+    this._WithLazyRedraw(() => {
+      this._ResizePrompt()
+      this._ResizeSelection()
+    })
   enddef
 
   def _ResizePrompt(): void
