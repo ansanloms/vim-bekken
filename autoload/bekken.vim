@@ -251,6 +251,7 @@ export class Bekken
     if key == "\<Bs>" || (char2nr(key) >= 32 && char2nr(key) <= 126)
       this.query = key == "\<Bs>" ? strcharpart(this.query, 0, strchars(this.query) - 1) : (this.query .. key)
       this._SetSelections()
+      this._SetSelected()
       this._Render()
     endif
 
@@ -303,8 +304,7 @@ export class Bekken
 
   def _SetSelections(): void
     if this.query->len() > 0
-      this.resource.selections = matchfuzzy(
-        this.resource.list,
+      this.resource.selections = this.resource.list->matchfuzzy(
         this.query,
         { key: this.resource.filterKey }
       )
